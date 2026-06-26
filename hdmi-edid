@@ -56,6 +56,13 @@ do_switch() {
         echo "Modes: $(cat /sys/class/drm/card1-${C}/modes 2>/dev/null | head -3 | tr '\n' ' ')"
         echo "Audio: $(aplay -D plughw:vc4hdmi0 /usr/share/sounds/alsa/Front_Center.wav 2>&1 | tail -1)"
     fi
+
+    # Restart desktop audio services to pick up new device
+    for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+        systemctl --user -M "${uid}@.host" restart pipewire pipewire-pulse wireplumber 2>/dev/null || true
+    done
+    echo ""
+    echo "Audio services refreshed."
 }
 
 # ─── uninstall ─────────────────────────────────────────────────────
