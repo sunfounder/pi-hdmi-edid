@@ -1,0 +1,14 @@
+[Unit]
+Description=HDMI EDID Boot Check
+After=multi-user.target
+Wants=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/hdmi-edid-boot-check
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
