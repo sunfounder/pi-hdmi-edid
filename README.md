@@ -1,54 +1,51 @@
-# Pi HDMI EDID Dynamic Switch
+# Pi HDMI EDID
 
 One script to manage HDMI EDID on Raspberry Pi 5 with audio extractors.
 
-## Problem
-
-HDMI audio extractors often don't assert HPD or provide EDID, causing Pi5's
-vc4-kms-v3d driver to reject HDMI audio. When a 4K display is connected behind
-the extractor, real EDID must be available for proper resolution.
-
-## Solution
+## Install
 
 ```bash
-sudo hdmi-edid setup     # One-time deployment
-sudo hdmi-edid switch    # Auto-detect and switch EDID mode
-sudo hdmi-edid rollback  # Restore original config
-```
-
-At boot, systemd runs `hdmi-edid switch` — reads DDC, uses real EDID if present,
-otherwise applies a fake EDID with 1080p + audio.
-
-## Quick Start
-
-```bash
-curl -O https://raw.githubusercontent.com/sunfounder/pi-hdmi-edid/main/hdmi-edid
-chmod +x hdmi-edid
-sudo ./hdmi-edid setup
+curl -sL https://raw.githubusercontent.com/sunfounder/pi-hdmi-edid/main/install.sh | sudo bash
 sudo reboot
 ```
 
-After reboot, the extractor's audio works. When 4K display is connected, run:
+## Usage
 
 ```bash
-sudo hdmi-edid switch
+hdmi-edid switch     # Auto-detect: real EDID if available, else fake (1080p+audio)
+hdmi-edid uninstall  # Remove all configuration
 ```
+
+At boot, systemd runs `hdmi-edid switch` automatically.
+
+## How It Works
+
+| Scenario | Boot | Manual |
+|----------|------|--------|
+| Extractor only | Auto-apply fake EDID → 1080p + audio | `hdmi-edid switch` |
+| Extractor + 4K display | DDC has real EDID → keep 4K | `hdmi-edid switch` |
+| Unplug 4K display | — | `hdmi-edid switch` |
+
+- `vc4.force_hotplug=1` in cmdline.txt forces HDMI connector "connected"
+- Fake EDID (256B base64 embedded) provides 1080p + LPCM 2ch audio
+- `edid_override` debugfs for runtime switching without reboot
 
 ## Files
 
 ```
-├── hdmi-edid                   # Main script (setup|switch|rollback)
-├── hdmi-edid-boot.service      # systemd unit
+├── install.sh        # One-line installer
+├── hdmi-edid         # Runtime script (switch|uninstall)
+├── hdmi-edid-boot.service  # systemd unit
 ├── README.md
 ├── LICENSE
-└── docs/Pi-HDMI-EDID.md        # Full documentation (Chinese)
+└── docs/
 ```
 
 ## Requirements
 
 - Raspberry Pi 5 (or Pi 4 with vc4-kms-v3d)
 - Raspberry Pi OS Bookworm
-- No external dependencies (pure bash, embedded EDID binary)
+- Zero dependencies (pure bash)
 
 ## License
 
