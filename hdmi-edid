@@ -1,6 +1,6 @@
 #!/bin/bash
 # hdmi-edid — unified HDMI EDID management for Raspberry Pi 5
-# Usage: hdmi-edid setup|switch|rollback|boot-check
+# Usage: hdmi-edid setup|switch|rollback
 set -euo pipefail
 
 C="HDMI-A-1"
@@ -73,7 +73,7 @@ Wants=multi-user.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/hdmi-edid boot-check
+ExecStart=/usr/local/bin/hdmi-edid switch
 RemainAfterExit=yes
 StandardOutput=journal
 StandardError=journal
@@ -84,40 +84,6 @@ UNITEOF
     systemctl daemon-reload
     systemctl enable hdmi-edid-boot.service
     echo "  Service installed and enabled"
-}
-
-# ─── boot_check ────────────────────────────────────────────────────
-boot_check() {
-    logger -t hdmi-edid "Boot check: reading EDID..."
-
-    # Wait for DRM (30s max)
-    for i in $(seq 1 30); do
-        [ -f "$E" ] && break
-        sleep 1
-    done
-
-    if [ ! -f "$E" ]; then
-        logger -t hdmi-edid "ERROR: EDID sysfs not found"
-        exit 1
-    fi
-
-    # Read EDID via temp file (bash $() strips null bytes)
-    TMP=$(mktemp)
-    cat "$E" > "$TMP" 2>/dev/null || true
-    SZ=$(wc -c < "$TMP")
-    rm -f "$TMP"
-
-    if [ "$SZ" -ge 256 ]; then
-        logger -t hdmi-edid "Real EDID found (${SZ}B). No override needed."
-        exit 0
-    fi
-
-    logger -t hdmi-edid "No EDID (${SZ}B). Applying fake EDID."
-    if [ -f "$F" ] && [ -w "$O" ]; then
-        cat "$F" > "$O"
-        echo detect > "$S" 2>/dev/null || true
-        logger -t hdmi-edid "Fake EDID applied."
-    fi
 }
 
 # ─── switch ────────────────────────────────────────────────────────
@@ -205,9 +171,6 @@ case "${1:-}" in
     rollback)
         need_root
         do_rollback
-        ;;
-    boot-check)
-        boot_check
         ;;
     *)
         usage
