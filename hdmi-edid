@@ -1,12 +1,9 @@
 #!/bin/bash
 # hdmi-edid — HDMI EDID runtime management for Raspberry Pi 5
 # Usage: hdmi-edid switch|uninstall
+# Auto-detects DRM card/debugfs paths — no hardcoded card numbers.
 set -euo pipefail
 
-C="HDMI-A-1"
-E="/sys/class/drm/card1-${C}/edid"
-O="/sys/kernel/debug/dri/1/${C}/edid_override"
-S="/sys/class/drm/card1-${C}/status"
 F="/lib/firmware/edid-hdmi-audio.bin"
 CMDLINE="/boot/firmware/cmdline.txt"
 CONFIG_TXT="/boot/firmware/config.txt"
@@ -23,16 +20,31 @@ need_root() {
     [ "$(id -u)" -eq 0 ] || { echo "ERROR: must run as root"; exit 1; }
 }
 
-# ─── switch ────────────────────────────────────────────────────────
-do_switch() {
-    echo "=== HDMI EDID Switch ==="
-    echo ""
-
-    # Wait for DRM if not ready (at boot)
+# Auto-detect DRM paths for HDMI-A-1 connector
+# Sets E (edid), S (status), O (edid_override debugfs)
+# Waits up to 30s for DRM to be ready (needed at boot)
+detect_paths() {
     for i in $(seq 1 30); do
-        [ -f "$E" ] && break
+        E=$(ls /sys/class/drm/card*-HDMI-A-1/edid 2>/dev/null | head -1)
+        O=$(ls /sys/kernel/debug/dri/*/HDMI-A-1/edid_override 2>/dev/null | head -1)
+        [ -n "$E" ] && [ -n "$O" ] && break
         sleep 1
     done
+    S="${E%edid}status"
+
+    if [ -z "$E" ] || [ -z "$O" ]; then
+        echo "ERROR: cannot find HDMI-A-1 connector after 30s"
+        echo "  E=$E"
+        echo "  O=$O"
+        exit 1
+    fi
+}
+
+# ─── switch ────────────────────────────────────────────────────────
+do_switch() {
+    detect_paths
+    echo "=== HDMI EDID Switch ==="
+    echo ""
 
     # Clear override, read DDC
     echo -n reset > "$O" 2>/dev/null || true
@@ -47,13 +59,13 @@ do_switch() {
     if [ "$SZ" -ge 256 ]; then
         echo "Real EDID detected (${SZ}B) — using hardware EDID"
         echo "Modes:"
-        cat /sys/class/drm/card1-${C}/modes 2>/dev/null | grep '^[0-9]' | sort -t x -k1 -nr | uniq | head -10
+        cat "${E%edid}modes" 2>/dev/null | grep '^[0-9]' | sort -t x -k1 -nr | uniq | head -10
     else
         echo "No real EDID (${SZ}B) — applying fake EDID (1080p+audio)"
         cat "$F" > "$O" 2>/dev/null
         echo detect > "$S" 2>/dev/null || true
         sleep 0.3
-        echo "Modes: $(cat /sys/class/drm/card1-${C}/modes 2>/dev/null | head -3 | tr '\n' ' ')"
+        echo "Modes: $(cat "${E%edid}modes" 2>/dev/null | head -3 | tr '\n' ' ')"
         echo "Audio: $(aplay -D plughw:vc4hdmi0 /usr/share/sounds/alsa/Front_Center.wav 2>&1 | tail -1)"
     fi
 
@@ -69,6 +81,7 @@ do_switch() {
 
 # ─── uninstall ─────────────────────────────────────────────────────
 do_uninstall() {
+    detect_paths
     echo "=== HDMI EDID Uninstall ==="
     echo ""
 
