@@ -395,17 +395,16 @@ _config_done_msg() {
 # ─── EDID generation with active list ───
 _config_gen_edid() {
     local pref_key="${1:-1080p60}"
-    # Build comma-separated key list for Python
     local keys=""
     for entry in "${_CONFIG_ACTIVE[@]}"; do
         local k="${entry##*|}"
         [ -z "$keys" ] && keys="$k" || keys="$keys,$k"
     done
 
-    python3 << PYEOF
-import struct
-PREF_KEY = '$pref_key'
-ACTIVE_KEYS = '$keys'.split(',')
+    cat > /tmp/hdmi-edid-gen.py << PYEOF
+import struct, sys
+PREF_KEY = sys.argv[1] if len(sys.argv) > 1 else '1080p60'
+ACTIVE_KEYS = sys.argv[2].split(',') if len(sys.argv) > 2 else ['1080p60']
 
 TIMINGS = {
     '1080p60':(14850,1920,280,88,44,1080,45,4,5,1,1),
@@ -540,6 +539,8 @@ for blk in range(1, total_blocks):
 with open('/lib/firmware/edid-hdmi-audio.bin','wb') as f: f.write(bytes(e))
 print(f"  EDID: {len(e)}B, {len(vics)} VICs + {len(dtds)+2} DTDs, preferred: {PREF_KEY}")
 PYEOF
+    python3 /tmp/hdmi-edid-gen.py "$pref_key" "$keys"
+    rm -f /tmp/hdmi-edid-gen.py
 }
 do_uninstall() {
     detect_paths
