@@ -25,45 +25,72 @@ python3 "$GEN" "1080p60" "$DEFAULT_MODES"
 rm -f "$GEN"
 echo ""
 
-# ─── Step 2: Detect audio EDID ───PYEOF
-echo ""
-
-# ─── Step 2: Detect real EDID and check for audio ───
+# ─── Step 2: Detect audio EDID (sysfs + I2C fallback) ───
 echo "[2/5] Detecting audio EDID..."
 HAS_AUDIO_EDID=false
 EDID_SIZE=0
 
+# First try sysfs
 EDID_PATH=$(ls /sys/class/drm/card*-HDMI-A-1/edid 2>/dev/null | head -1)
 if [ -n "$EDID_PATH" ]; then
     TMP=$(mktemp)
     cat "$EDID_PATH" > "$TMP" 2>/dev/null || true
     EDID_SIZE=$(wc -c < "$TMP")
     rm -f "$TMP"
-
-    if [ "$EDID_SIZE" -ge 256 ]; then
-        CEA_TAG=$(dd if="$EDID_PATH" bs=1 skip=128 count=1 2>/dev/null | od -A n -t u1 | tr -d ' ')
-        if [ "$CEA_TAG" = "2" ]; then
-            DTD_OFFSET=$(dd if="$EDID_PATH" bs=1 skip=130 count=1 2>/dev/null | od -A n -t u1 | tr -d ' ')
-            SCAN_LEN=$((DTD_OFFSET > 4 ? DTD_OFFSET : 4))
-            i=0
-            while [ $i -lt $SCAN_LEN ]; do
-                BYTE=$(dd if="$EDID_PATH" bs=1 skip=$((132 + i)) count=1 2>/dev/null | od -A n -t u1 | tr -d ' ')
-                TAG=$(( (BYTE >> 5) & 7 ))
-                LEN=$(( BYTE & 31 ))
-                if [ "$TAG" = "1" ] && [ "$LEN" -ge 3 ]; then
-                    HAS_AUDIO_EDID=true
-                    break
-                fi
-                i=$((i + 1 + LEN))
-            done
-        fi
-    fi
 fi
 
-if $HAS_AUDIO_EDID; then
-    echo "  Audio-capable EDID detected (${EDID_SIZE}B) -> Path A (passthrough mode)"
+# Check audio in EDID data
+_check_audio_edid() {
+    local edid_file="$1"
+    local size=$(wc -c < "$edid_file")
+    [ "$size" -lt 256 ] && return 1
+    local tag=$(dd if="$edid_file" bs=1 skip=128 count=1 2>/dev/null | od -A n -t u1 | tr -d ' ')
+    [ "$tag" != "2" ] && return 1
+    local dtd_off=$(dd if="$edid_file" bs=1 skip=130 count=1 2>/dev/null | od -A n -t u1 | tr -d ' ')
+    local scan_len=$((dtd_off > 4 ? dtd_off : 4))
+    local i=0
+    while [ $i -lt $scan_len ]; do
+        local byte=$(dd if="$edid_file" bs=1 skip=$((132 + i)) count=1 2>/dev/null | od -A n -t u1 | tr -d ' ')
+        local t=$(( (byte >> 5) & 7 ))
+        local l=$(( byte & 31 ))
+        [ "$t" = "1" ] && [ "$l" -ge 3 ] && return 0
+        i=$((i + 1 + l))
+    done
+    return 1
+}
+
+if _check_audio_edid "$EDID_PATH" 2>/dev/null; then
+    HAS_AUDIO_EDID=true
+    echo "  Audio EDID detected via sysfs (${EDID_SIZE}B) -> Path A"
 else
-    echo "  No audio-capable EDID (${EDID_SIZE}B) -> Path B (drm.edid_firmware mode)"
+    # Sysfs failed — try I2C
+    echo "  Sysfs: no audio EDID (${EDID_SIZE}B), trying I2C..."
+    DDC=""
+    for bus in 13 11 14; do
+        if i2cdetect -y $bus 0x50 0x50 2>/dev/null | grep -q 50; then
+            DDC=$bus; break
+        fi
+    done
+    if [ -n "$DDC" ]; then
+        python3 -c "
+import subprocess
+data=bytearray(256)
+for a in range(256):
+    r=subprocess.run(['i2cget','-y','$DDC','0x50',str(a)],capture_output=True,text=True)
+    if r.returncode==0: data[a]=int(r.stdout.strip(),16)
+with open('/tmp/i2c-edid.bin','wb') as f: f.write(bytes(data))
+" 2>/dev/null
+        if [ -f /tmp/i2c-edid.bin ] && _check_audio_edid /tmp/i2c-edid.bin 2>/dev/null; then
+            HAS_AUDIO_EDID=true
+            EDID_SIZE=$(wc -c < /tmp/i2c-edid.bin)
+            echo "  Audio EDID detected via I2C bus $DDC (${EDID_SIZE}B) -> Path A"
+        else
+            echo "  I2C: no audio EDID -> Path B"
+        fi
+        rm -f /tmp/i2c-edid.bin
+    else
+        echo "  No DDC bus found -> Path B"
+    fi
 fi
 
 # ─── Step 3: Configure kernel ───
