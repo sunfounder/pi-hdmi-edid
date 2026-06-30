@@ -129,8 +129,9 @@ _cfg_loop() {
         echo "  5) Set preferred"
         echo "  6) Restore defaults"
         echo "  7) Save & quit"
+        echo "  8) Quit (discard changes)"
         echo ""
-        printf "Enter choice [1-7]: "
+        printf "Enter choice [1-8]: "
         read -r choice
         case "$choice" in
             1) _cfg_delete ;;
@@ -140,6 +141,7 @@ _cfg_loop() {
             5) _cfg_pref ;;
             6) _cfg_reset_cfm ;;
             7) _cfg_save; break ;;
+            8) _cfg_quit ;;
             *) echo "Invalid choice."; read -p "Press Enter..."; ;;
         esac
     done
@@ -204,6 +206,8 @@ _cfg_delete() {
     read -r yn
     [ "${yn,,}" != "y" ] && { echo "Cancelled."; return; }
 
+    # Save entries before deletion for preset restoration
+    local saved=("${_CONFIG_ACTIVE[@]}")
     for n in "${sorted[@]}"; do
         local idx=$((n-1))
         local label="${_CONFIG_ACTIVE[$idx]%%|*}"
@@ -211,6 +215,16 @@ _cfg_delete() {
         [ "$idx" -lt "$_CONFIG_PREF_IDX" ] && _CONFIG_PREF_IDX=$((_CONFIG_PREF_IDX-1))
         [ "$idx" -eq "$_CONFIG_PREF_IDX" ] && _CONFIG_PREF_IDX=0
         echo "  Removed: $label"
+        # Add back to preset
+        local entry="${saved[$idx]}"
+        local already=false
+        local p
+        for p in "${_CONFIG_PRESET[@]}"; do
+            [ "$p" = "$entry" ] && already=true && break
+        done
+        if ! $already; then
+            _CONFIG_PRESET+=("$entry")
+        fi
     done
     _CONFIG_ACTIVE=("${_CONFIG_ACTIVE[@]}")
     read -p "Press Enter..."
@@ -297,17 +311,18 @@ _cfg_read() {
         return
     fi
     echo "  DDC bus: $ddc"
+    echo ""
     local result
     result=$(python3 /usr/local/bin/hdmi-edid-merge "$ddc" 2>&1)
     echo "$result"
     echo ""
-    echo "  1) Merge — combine external + current, keep audio"
-    echo "  2) Replace — use external resolutions, keep audio"
+    echo "  1) Merge — combine external + current"
+    echo "  2) Replace — use external resolutions"
     echo "  3) Cancel"
     printf "Choice [1-3]: "
     read -r rc
     case "$rc" in
-        1) echo "Merge selected. (Full merge logic pending — external VICs noted.)" ;;
+        1) echo "Merge selected. (Full merge logic pending.)" ;;
         2) echo "Replace selected. (Full replace logic pending.)" ;;
         *) echo "Cancelled."; return ;;
     esac
@@ -335,6 +350,13 @@ _cfg_reset_cfm() {
     read -p "Press Enter..."
 }
 
+_cfg_quit() {
+    echo ""
+    printf "Quit without saving? Changes will be lost. [y/N]: "
+    read -r yn
+    [ "${yn,,}" = "y" ] && { echo "Quit."; exit 0; }
+}
+
 _cfg_save() {
     local pref_key="${_CONFIG_ACTIVE[$_CONFIG_PREF_IDX]##*|}"
     local keys=""
@@ -346,9 +368,9 @@ _cfg_save() {
     python3 /usr/local/bin/hdmi-edid-gen "$pref_key" "$keys"
     echo "EDID saved."
     if grep -q 'drm.edid_firmware' /proc/cmdline 2>/dev/null; then
-        echo "Path B: Reboot required."
+        echo "Reboot required to apply changes."
     else
-        echo "Path A: Run hdmi-edid switch or reboot."
+        echo "Run 'hdmi-edid switch' or reboot to apply."
     fi
 }
 
