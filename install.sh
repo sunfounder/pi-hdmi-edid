@@ -66,18 +66,14 @@ else
     # Check if connector is even connected
     CONN_STATUS=$(cat "${EDID_PATH%edid}status" 2>/dev/null || echo "unknown")
     if [ "$CONN_STATUS" != "connected" ]; then
-        echo "  Connector is $CONN_STATUS — extractor may need HPD signal."
-        echo "  Adding vc4.force_hotplug=1 to cmdline..."
+        echo "  Connector is $CONN_STATUS — adding vc4.force_hotplug=1..."
         [ ! -f "${CMDLINE}.bak" ] && cp "$CMDLINE" "${CMDLINE}.bak"
         if ! grep -q 'vc4.force_hotplug=1' "$CMDLINE"; then
             sed -i '$s/$/ vc4.force_hotplug=1/' "$CMDLINE"
         fi
-        echo ""
-        echo "  ========================================"
-        echo "  Reboot required to activate extractor."
-        echo "  After reboot, run install.sh again."
-        echo "  ========================================"
-        exit 0
+        # Assume Path A — reboot will confirm via boot service
+        HAS_AUDIO_EDID=true
+        echo "  Assuming Path A (will verify after reboot)"
     fi
     # Sysfs failed — try I2C
     echo "  Sysfs: no audio EDID (${EDID_SIZE}B), trying I2C..."
