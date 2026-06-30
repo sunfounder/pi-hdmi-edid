@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""EDID generator for hdmi-edid. Called by hdmi-edid config."""
+import struct, sys
+
+PREF_KEY = sys.argv[1] if len(sys.argv) > 1 else '1080p60'
+ACTIVE_KEYS = sys.argv[2].split(',') if len(sys.argv) > 2 else ['1080p60']
+
+TIMINGS = {
+    '1080p60':(14850,1920,280,88,44,1080,45,4,5,1,1),
+    '1080p50':(14850,1920,720,528,44,1080,45,4,5,1,1),
+    '1080p30':(7425,1920,280,88,44,1080,45,4,5,1,1),
+    '1080p25':(7425,1920,720,528,44,1080,45,4,5,1,1),
+    '1080p24':(7425,1920,830,638,44,1080,45,4,5,1,1),
+    '1080i60':(7425,1920,280,88,44,540,22,2,5,1,1),
+    '1080i50':(7425,1920,720,528,44,540,22,2,5,1,1),
+    '720p60':(7425,1280,370,110,40,720,30,5,5,1,1),
+    '720p50':(7425,1280,700,440,40,720,30,5,5,1,1),
+    '4k60':(59400,3840,560,176,88,2160,90,8,10,1,1),
+    '4k50':(59400,3840,1440,1056,88,2160,90,8,10,1,1),
+    '4k30':(29700,3840,560,176,88,2160,90,8,10,1,1),
+    '4k25':(29700,3840,1440,1056,88,2160,90,8,10,1,1),
+    '4k24':(29700,3840,1660,1276,88,2160,90,8,10,1,1),
+    '1440p60':(24150,2560,160,48,32,1440,41,3,5,0,0),
+    '1600p60':(26850,2560,160,48,32,1600,46,3,6,0,0),
+    'uw1080p60':(18560,2560,160,48,32,1080,42,3,5,0,0),
+    'uw1440p60':(31975,3440,160,48,32,1440,41,3,5,0,0),
+    '800p60':(7100,1280,160,48,32,800,23,3,6,0,0),
+    '768p60':(8550,1360,432,64,112,768,27,3,6,1,1),
+    '900p60':(10650,1440,464,80,152,900,34,3,6,0,0),
+    '900p60_1600':(10800,1600,160,48,32,900,34,3,6,0,0),
+    '1050p60':(14625,1680,560,104,176,1050,39,3,6,0,0),
+    '1200p60':(15400,1920,160,48,32,1200,35,3,6,0,0),
+    'x1024p60':(6500,1024,320,24,136,768,38,3,6,0,0),
+    'sxga60':(10800,1280,408,48,112,1024,42,3,6,1,1),
+    'sxga75':(13500,1280,408,48,112,1024,42,3,6,1,1),
+    'uxga60':(16200,1600,560,64,192,1200,50,3,6,1,1),
+    '480p60':(2518,640,160,16,96,480,45,10,2,0,0),
+    '480p60_720':(2700,720,138,16,62,480,45,9,6,0,0),
+}
+
+VIC_MAP = {
+    '4k60':97, '4k50':96, '4k30':95, '4k25':94, '4k24':93,
+    '1080p60':16, '1080p50':31, '1080p30':34, '1080p25':33, '1080p24':32,
+    '1080i60':5, '1080i50':20,
+    '720p60':4, '720p50':19,
+    '480p60':1, '480p60_720':3,
+}
+
+def wd(buf, off, t):
+    pclk,ha,hb,hso,hsw,va,vb,vso,vsw,hp,vp = t
+    struct.pack_into('<H',buf,off,pclk)
+    buf[off+2]=ha&0xFF; buf[off+3]=hb&0xFF
+    buf[off+4]=((ha>>8)&0xF)<<4|((hb>>8)&0xF)
+    buf[off+5]=va&0xFF; buf[off+6]=vb&0xFF
+    buf[off+7]=((va>>8)&0xF)<<4|((vb>>8)&0xF)
+    buf[off+8]=hso&0xFF; buf[off+9]=hsw&0xFF
+    buf[off+10]=((vso&0xF)<<4)|(vsw&0xF)
+    buf[off+11]=((hso>>8)&0x3)<<2|((hsw>>8)&0x3)
+    buf[off+12:off+18]=bytes([0,0,0,0x18,0,0])
+
+vics = []
+dtds = []
+for k in ACTIVE_KEYS:
+    if k in VIC_MAP:
+        vics.append(VIC_MAP[k])
+    elif k in TIMINGS:
+        dtds.append(k)
+
+nd = len(dtds) + 1
+nblocks = 1
+if nd > 2:
+    nd -= 2
+    nblocks += (nd + 4) // 5
+total_blocks = min(1 + nblocks, 4)
+edid_size = total_blocks * 128
+B = 128
+
+e = bytearray(edid_size)
+e[0:8]=bytes([0,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0])
+e[8:10]=bytes([0x48,0xF2]); e[10:12]=struct.pack('<H',1)
+e[12:16]=struct.pack('<I',1); e[16]=26; e[17]=35
+e[18]=1; e[19]=4; e[20]=0xA5; e[21:23]=bytes([0,0])
+e[23]=0x78; e[24]=0x0E
+e[25:35]=bytes([0xEE,0x91,0xA3,0x54,0x4C,0x99,0x26,0x0F,0x50,0x54])
+e[35:38]=bytes([0x21,0x08,0])
+for i in range(38,54,2): e[i]=1; e[i+1]=1
+
+pref_t = TIMINGS.get(PREF_KEY) or (TIMINGS[dtds[0]] if dtds else TIMINGS['1080p60'])
+wd(e, 54, pref_t)
+
+dtdo = [k for k in dtds if k != PREF_KEY]
+dtdo.insert(0, '720p60')
+dtd2 = dtdo[0] if dtdo[0] in TIMINGS else '720p60'
+wd(e, 72, TIMINGS[dtd2])
+dtds_remaining = [k for k in dtds if k not in (PREF_KEY, dtd2)]
+
+e[90:108]=bytes([0,0,0,0xFC,0,0x48,0x44,0x4D,0x49,0x2D,0x45,0x44,0x49,0x44,0x0A,0x20,0x20,0x20])
+e[108:126]=bytes([0,0,0,0xFD,0,24,77,30,85,0xAA,0,0,0,0,0,0,0,0])
+e[126]=total_blocks-1
+e[127]=(256-sum(e[:127]))&0xFF
+
+for blk in range(1, total_blocks):
+    off = blk * B
+    e[off]=2; e[off+1]=3
+    p = 4
+    if blk == 1 and vics:
+        nv = len(vics)
+        e[off+p]=(2<<5)|((1+nv)&0x1F); e[off+p+1]=nv
+        for i,v in enumerate(vics): e[off+p+2+i]=v
+        p += 2+nv
+        e[off+p]=(1<<5)|3; e[off+p+1]=9; e[off+p+2]=7; e[off+p+3]=7; p+=4
+        e[off+p]=(4<<5)|3; e[off+p+1]=0; e[off+p+2]=0; e[off+p+3]=1; p+=4
+        e[off+p]=(3<<5)|5; e[off+p+1]=3; e[off+p+2]=0xC; e[off+p+3]=0
+        e[off+p+4]=0x10; e[off+p+5]=0; p+=6
+    n_dtd = 0
+    while dtds_remaining and p + 18 <= 127:
+        k = dtds_remaining.pop(0)
+        if k in TIMINGS:
+            wd(e, off+p, TIMINGS[k])
+            p += 18; n_dtd += 1
+    e[off+2]=p; e[off+3]=n_dtd
+    for i in range(p, 127): e[off+i]=0
+    e[off+127]=(256-sum(e[off:off+127]))&0xFF
+
+with open('/lib/firmware/edid-hdmi-audio.bin','wb') as f: f.write(bytes(e))
+print(f"EDID: {len(e)}B, {len(vics)} VICs + {len(dtds)+2} DTDs, preferred: {PREF_KEY}")

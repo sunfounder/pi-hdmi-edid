@@ -258,11 +258,14 @@ else
     echo "  hdmi_force_hotplug=1 already present"
 fi
 
-# ─── Step 4: Install hdmi-edid script ───
-echo "[5/5] Installing hdmi-edid..."
+# ─── Step 4: Install scripts ───
+echo "[5/5] Installing scripts..."
 curl -sL -o "$SCRIPT" https://raw.githubusercontent.com/sunfounder/pi-hdmi-edid/main/hdmi-edid
 chmod +x "$SCRIPT"
 echo "  Installed to $SCRIPT"
+curl -sL -o /usr/local/bin/hdmi-edid-gen https://raw.githubusercontent.com/sunfounder/pi-hdmi-edid/main/hdmi-edid-gen
+chmod +x /usr/local/bin/hdmi-edid-gen
+echo "  Installed hdmi-edid-gen"
 
 # ─── Step 5: Install systemd service (Path A only) ───
 if $HAS_AUDIO_EDID; then
