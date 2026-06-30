@@ -287,17 +287,16 @@ _config_merge() {
         return
     fi
 
-    python3 << PYEOF
-import subprocess, struct
+    cat > /tmp/hdmi-edid-merge.py << 'PYEOF'
+import subprocess, struct, sys
+bus = sys.argv[1] if len(sys.argv) > 1 else '13'
 data = bytearray(256)
 for a in range(256):
-    r = subprocess.run(['i2cget','-y','$DDC','0x50',str(a)], capture_output=True, text=True)
+    r = subprocess.run(['i2cget','-y',bus,'0x50',str(a)], capture_output=True, text=True)
     if r.returncode == 0: data[a] = int(r.stdout.strip(),16)
 if data[:8] != bytes([0,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0]):
     print("Invalid EDID header")
     exit(1)
-
-# Get display name from EDID descriptor
 name = "Display"
 for dtd_off in [54, 72, 90, 108]:
     if dtd_off+18 > 128: break
@@ -305,8 +304,6 @@ for dtd_off in [54, 72, 90, 108]:
     if dtd[0:2] == bytes([0,0]) and dtd[3] == 0xFC:
         name = dtd[5:18].decode('ascii','ignore').strip('\x00\x0a\x20')
         break
-
-# Extract VICs
 vics = []
 if len(data) >= 256 and data[128] == 2:
     off = data[130]; pos = 4
@@ -316,11 +313,12 @@ if len(data) >= 256 and data[128] == 2:
             n = data[128+pos+1]
             for i in range(n): vics.append(data[128+pos+2+i])
         pos += 1+length
-
 print(f"DISPLAY_NAME={name}")
 print(f"VICS={' '.join(str(v) for v in vics)}")
 print(f"EDID_BYTES={len(data)}")
 PYEOF
+    python3 /tmp/hdmi-edid-merge.py "$DDC"
+    rm -f /tmp/hdmi-edid-merge.py
 
     echo "External EDID read complete."
     echo "Use 'Add from preset' to add resolutions from the external display."
