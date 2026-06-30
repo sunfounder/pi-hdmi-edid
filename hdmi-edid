@@ -38,8 +38,7 @@ do_switch() {
     echo "=== HDMI EDID Switch ==="
     echo ""
     if grep -q 'drm.edid_firmware' /proc/cmdline 2>/dev/null; then
-        echo "WARNING: Path B mode — switch has no effect."
-        echo "  Refreshing PipeWire only..."
+        echo "WARNING: Path B mode — switch has no effect. Refreshing PipeWire..."
         for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
             systemctl --user -M "${uid}@.host" restart pipewire pipewire-pulse wireplumber 2>/dev/null || true
         done
@@ -73,7 +72,7 @@ do_switch() {
 # ─── config ───────────────────────────────────────────────────
 _CONFIG_ACTIVE=()
 _CONFIG_PRESET=()
-_CONFIG_PREF_IDX=2
+_CONFIG_PREF_IDX=3
 
 do_config() {
     need_root
@@ -84,43 +83,41 @@ do_config() {
 _cfg_init() {
     _CONFIG_ACTIVE=(
         "3840x2160@30|4k30"
-        "1920x1080@60|1080p60"
-        "1920x1080@50|1080p50"
-        "1920x1080@30|1080p30"
-        "1920x1080@24|1080p24"
-        "1280x720@60|720p60"
-        "2560x1440@60|1440p60"
-        "1280x800@60|800p60"
-        "1360x768@60|768p60"
-        "1440x900@60|900p60"
-        "1680x1050@60|1050p60"
-        "1920x1200@60|1200p60"
-        "1024x768@60|x1024p60"
-        "640x480@60|480p60"
-    )
-    _CONFIG_PREF_IDX=1
-    _CONFIG_PRESET=(
-        "3840x2160@50|4k50"
         "3840x2160@25|4k25"
         "3840x2160@24|4k24"
+        "1920x1080@60|1080p60"
+        "1920x1080@50|1080p50"
         "1920x1080@30|1080p30"
         "1920x1080@25|1080p25"
         "1920x1080@24|1080p24"
         "1920x1080i@60|1080i60"
         "1920x1080i@50|1080i50"
+        "1280x720@60|720p60"
         "1280x720@50|720p50"
+        "2560x1440@60|1440p60"
         "2560x1600@60|1600p60"
         "2560x1080@60|uw1080p60"
         "3440x1440@60|uw1440p60"
         "1600x1200@60|uxga60"
+        "1920x1200@60|1200p60"
+        "1680x1050@60|1050p60"
         "1600x900@60|900p60_1600"
         "1440x900@60|900p60"
-        "1680x1050@60|1050p60"
         "1360x768@60|768p60"
         "1280x1024@60|sxga60"
-        "1280x1024@75|sxga75"
+        "1280x800@60|800p60"
+        "1024x768@60|x1024p60"
         "640x480@60|480p60"
         "720x480@60|480p60_720"
+    )
+    _CONFIG_PREF_IDX=3
+    _CONFIG_PRESET=(
+        "3840x2160@50|4k50"
+        "1280x1024@75|sxga75"
+        "1400x1050@60|1050p60_1400"
+        "1152x864@60|864p60"
+        "800x600@60|600p60"
+        "720x400@70|400p70"
     )
 }
 
@@ -147,7 +144,7 @@ _cfg_loop() {
             6) _cfg_reset_cfm ;;
             7) _cfg_save; break ;;
             8) _cfg_quit ;;
-            *) echo "Invalid choice."; read -p "Press Enter..."; ;;
+            *) echo "Invalid choice."; read -p "Press Enter..." ;;
         esac
     done
 }
@@ -196,7 +193,6 @@ _cfg_delete() {
     done
     [ ${#td[@]} -eq 0 ] && { echo "No valid entries."; read -p "Press Enter..."; return; }
 
-    # Show what will be deleted
     local sorted=($(printf '%s\n' "${td[@]}" | sort -rn))
     echo -n "Delete: "
     local first=true
@@ -211,7 +207,6 @@ _cfg_delete() {
     read -r yn
     [ "${yn,,}" != "y" ] && { echo "Cancelled."; return; }
 
-    # Save entries before deletion for preset restoration
     local saved=("${_CONFIG_ACTIVE[@]}")
     for n in "${sorted[@]}"; do
         local idx=$((n-1))
@@ -220,7 +215,6 @@ _cfg_delete() {
         [ "$idx" -lt "$_CONFIG_PREF_IDX" ] && _CONFIG_PREF_IDX=$((_CONFIG_PREF_IDX-1))
         [ "$idx" -eq "$_CONFIG_PREF_IDX" ] && _CONFIG_PREF_IDX=0
         echo "  Removed: $label"
-        # Add back to preset
         local entry="${saved[$idx]}"
         local already=false
         local p
@@ -238,8 +232,7 @@ _cfg_delete() {
 _cfg_add() {
     echo ""
     echo "Preset library (not yet active):"
-    local i count=0
-    local disp_idx=0
+    local i count=0 disp_idx=0
     local pmap=()
     for i in "${!_CONFIG_PRESET[@]}"; do
         local entry="${_CONFIG_PRESET[$i]}"
@@ -255,7 +248,7 @@ _cfg_add() {
             printf "  [%2d] %s\n" $disp_idx "${entry%%|*}"
         fi
     done
-    [ $count -eq 0 ] && { echo "  (all presets already active)"; read -p "Press Enter..."; return; }
+    [ $count -eq 0 ] && { echo "  所有预设已添加"; read -p "Press Enter..."; return; }
     echo ""
     echo "Enter numbers to add (e.g. 1,3,5-7) or 0 to cancel:"
     printf "> "
