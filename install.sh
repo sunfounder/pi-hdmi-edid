@@ -266,6 +266,9 @@ echo "  Installed to $SCRIPT"
 curl -sL -o /usr/local/bin/hdmi-edid-gen https://raw.githubusercontent.com/sunfounder/pi-hdmi-edid/main/hdmi-edid-gen
 chmod +x /usr/local/bin/hdmi-edid-gen
 echo "  Installed hdmi-edid-gen"
+curl -sL -o /usr/local/bin/hdmi-edid-merge https://raw.githubusercontent.com/sunfounder/pi-hdmi-edid/main/hdmi-edid-merge
+chmod +x /usr/local/bin/hdmi-edid-merge
+echo "  Installed hdmi-edid-merge"
 
 # ─── Step 5: Install systemd service (Path A only) ───
 if $HAS_AUDIO_EDID; then

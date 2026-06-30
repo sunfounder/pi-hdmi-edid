@@ -1,7 +1,5 @@
 #!/bin/bash
 # hdmi-edid — HDMI EDID runtime management for Raspberry Pi 5
-# Usage: hdmi-edid switch|config|uninstall
-# Auto-detects DRM card/debugfs paths — no hardcoded card numbers.
 set -euo pipefail
 
 F="/lib/firmware/edid-hdmi-audio.bin"
@@ -12,7 +10,7 @@ usage() {
     echo "Usage: hdmi-edid switch|config|uninstall"
     echo ""
     echo "  switch    Auto-detect and switch EDID mode (real or fake)"
-    echo "  config    Select fake EDID resolution interactively"
+    echo "  config    Manage EDID resolutions interactively"
     echo "  uninstall Remove all configuration (restore original state)"
     exit 1
 }
@@ -21,7 +19,6 @@ need_root() {
     [ "$(id -u)" -eq 0 ] || { echo "ERROR: must run as root"; exit 1; }
 }
 
-# Auto-detect DRM paths for HDMI-A-1 connector
 detect_paths() {
     for i in $(seq 1 30); do
         E=$(ls /sys/class/drm/card*-HDMI-A-1/edid 2>/dev/null | head -1)
@@ -30,334 +27,80 @@ detect_paths() {
         sleep 1
     done
     S="${E%edid}status"
-
     if [ -z "$E" ] || [ -z "$O" ]; then
         echo "ERROR: cannot find HDMI-A-1 connector after 30s"
-        echo "  E=$E"
-        echo "  O=$O"
         exit 1
     fi
 }
 
-# ─── switch ────────────────────────────────────────────────────────
 do_switch() {
     detect_paths
     echo "=== HDMI EDID Switch ==="
     echo ""
-
-    # Path B check: drm.edid_firmware overrides everything
     if grep -q 'drm.edid_firmware' /proc/cmdline 2>/dev/null; then
-        echo "WARNING: Path B mode (drm.edid_firmware in cmdline)"
-        echo "  EDID is permanently overridden — switch has no effect."
-        echo "  To read external EDID: connect display, then read I2C DDC."
-        echo ""
-        # Still refresh audio services
+        echo "WARNING: Path B mode — switch has no effect."
+        echo "  Refreshing PipeWire only..."
         for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
             systemctl --user -M "${uid}@.host" restart pipewire pipewire-pulse wireplumber 2>/dev/null || true
         done
         killall wf-panel-pi 2>/dev/null || true
-        echo "Audio services refreshed."
         return
     fi
-
-    # Clear override, read DDC
     echo -n reset > "$O" 2>/dev/null || true
     echo detect > "$S" 2>/dev/null || true
     sleep 0.5
-
     TMP=$(mktemp)
     cat "$E" > "$TMP" 2>/dev/null || true
     SZ=$(wc -c < "$TMP")
     rm -f "$TMP"
-
     if [ "$SZ" -ge 256 ]; then
         echo "Real EDID detected (${SZ}B) — using hardware EDID"
-        echo "Modes:"
         cat "${E%edid}modes" 2>/dev/null | grep '^[0-9]' | sort -t x -k1 -nr | uniq | head -10
     else
-        echo "No real EDID (${SZ}B) — applying fake EDID (1080p+audio)"
+        echo "No real EDID (${SZ}B) — applying fake EDID"
         cat "$F" > "$O" 2>/dev/null
         echo detect > "$S" 2>/dev/null || true
         sleep 0.3
         echo "Modes: $(cat "${E%edid}modes" 2>/dev/null | head -3 | tr '\n' ' ')"
     fi
-
-    # Restart desktop audio services
     for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
         systemctl --user -M "${uid}@.host" restart pipewire pipewire-pulse wireplumber 2>/dev/null || true
     done
     killall wf-panel-pi 2>/dev/null || true
-    echo ""
     echo "Audio services refreshed."
 }
 
-# ─── config ────────────────────────────────────────────────────────
+# ─── config ───────────────────────────────────────────────────
+_CONFIG_ACTIVE=()
+_CONFIG_PRESET=()
+_CONFIG_PREF_IDX=2
+
 do_config() {
     need_root
-    _config_init
-    _config_loop
+    _cfg_init
+    _cfg_loop
 }
 
-_config_init() {
-    # Initialize from current EDID or defaults
-    # For now, always start with factory defaults
+_cfg_init() {
     _CONFIG_ACTIVE=(
         "3840x2160@60|4k60"
         "3840x2160@30|4k30"
         "1920x1080@60|1080p60"
         "1920x1080@50|1080p50"
-        "1920x1080@30|1080p30"
-        "1920x1080@24|1080p24"
         "1280x720@60|720p60"
         "2560x1440@60|1440p60"
         "1280x800@60|800p60"
-        "1360x768@60|768p60"
-        "1440x900@60|900p60"
-        "1680x1050@60|1050p60"
         "1920x1200@60|1200p60"
         "1024x768@60|x1024p60"
-        "640x480@60|480p60"
-    )
-    _CONFIG_PREF_IDX=2
-    _CONFIG_PRESET=(
-    "3840x2160@50|4k50"
-    "3840x2160@25|4k25"
-    "3840x2160@24|4k24"
-    "1920x1080@25|1080p25"
-    "1920x1080i@60|1080i60"
-    "1920x1080i@50|1080i50"
-    "1280x720@50|720p50"
-    "2560x1600@60|1600p60"
-    "2560x1080@60|uw1080p60"
-    "3440x1440@60|uw1440p60"
-    "1600x1200@60|uxga60"
-    "1600x900@60|900p60_1600"
-    "1280x1024@60|sxga60"
-    "1280x1024@75|sxga75"
-    "720x480@60|480p60_720"
-    "720x576@50|576p50"
-    "1920x1080@25|1080p25"
-    "1400x1050@60|1050p60_1400"
-    "1152x864@60|864p60"
-    "800x600@60|600p60"
-    "720x400@70|400p70"
-)
-
-_CONFIG_PREF_IDX=2  # default: 1920x1080@60
-
-_config_loop() {
-    while true; do
-        _config_show
-        printf "Command [D/A/C/M/P/R/Q]: "
-        read -r cmd rest
-        case "${cmd^^}" in
-            D) _config_delete "$rest" ;;
-            A) _config_add ;;
-            C) _config_custom ;;
-            M) _config_merge ;;
-            P) _config_preferred "$rest" ;;
-            R) _config_reset ;;
-            Q) _config_save; break ;;
-            *) echo "Unknown command. D/A/C/M/P/R/Q" ;;
-        esac
-        echo ""
-    done
-}
-
-_config_show() {
-    clear 2>/dev/null || true
-    echo "=== HDMI EDID Config ==="
-    if grep -q 'drm.edid_firmware' /proc/cmdline 2>/dev/null; then
-        MODE="Path B (drm.edid_firmware)"
-    else
-        MODE="Path A (runtime switch)"
-    fi
-    PREF_LABEL="${_CONFIG_ACTIVE[$_CONFIG_PREF_IDX]%%|*}"
-    echo "Mode: $MODE  |  ${#_CONFIG_ACTIVE[@]} resolutions  |  Preferred: $PREF_LABEL"
-    echo ""
-
-    for i in "${!_CONFIG_ACTIVE[@]}"; do
-        LABEL="${_CONFIG_ACTIVE[$i]%%|*}"
-        MARK=" "
-        if [ "$i" -eq "$_CONFIG_PREF_IDX" ]; then MARK="*"; fi
-        printf "  [%2d] %-24s %s\n" $((i+1)) "$LABEL" "$MARK"
-    done
-
-    echo ""
-    echo "D <num,num-num>  Delete   A  Add from preset   C  Custom WxH@Hz"
-    echo "M  Merge external EDID     P <num>  Set preferred"
-    echo "R  Restore defaults        Q  Save & quit"
-}
-
-_config_delete() {
-    local nums="$1"
-    [ -z "$nums" ] && { echo "Usage: D <numbers>  e.g. D 1,3,5-7"; return; }
-    # Parse ranges like 1,3,5-7
-    local to_delete=()
-    IFS=',' read -ra parts <<< "$nums"
-    for part in "${parts[@]}"; do
-        if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-            for ((n=${BASH_REMATCH[1]}; n<=${BASH_REMATCH[2]}; n++)); do
-                [ "$n" -ge 1 ] && [ "$n" -le "${#_CONFIG_ACTIVE[@]}" ] && to_delete+=($n)
-            done
-        else
-            [ "$part" -ge 1 ] && [ "$part" -le "${#_CONFIG_ACTIVE[@]}" ] && to_delete+=($part)
-        fi
-    done
-    [ ${#to_delete[@]} -eq 0 ] && { echo "No valid entries to delete."; return; }
-    [ ${#_CONFIG_ACTIVE[@]} -le 1 ] && { echo "Cannot delete last resolution."; return; }
-
-    # Sort descending to remove from end
-    IFS=$'\n' sorted=($(sort -rn <<< "${to_delete[*]}"))
-    unset IFS
-    for n in "${sorted[@]}"; do
-        local idx=$((n-1))
-        local label="${_CONFIG_ACTIVE[$idx]%%|*}"
-        unset '_CONFIG_ACTIVE[idx]'
-        # Adjust preferred index
-        if [ "$idx" -lt "$_CONFIG_PREF_IDX" ]; then _CONFIG_PREF_IDX=$((_CONFIG_PREF_IDX-1)); fi
-        if [ "$idx" -eq "$_CONFIG_PREF_IDX" ]; then _CONFIG_PREF_IDX=0; fi
-        echo "  Removed: $label"
-    done
-    _CONFIG_ACTIVE=("${_CONFIG_ACTIVE[@]}")
-}
-
-_config_add() {
-    echo ""
-    echo "Preset library:"
-    for i in "${!_CONFIG_PRESET[@]}"; do
-        local label="${_CONFIG_PRESET[$i]%%|*}"
-        printf "  [%2d] %s\n" $((i+1)) "$label"
-    done
-    echo ""
-    printf "Add which? (numbers, comma/range): "
-    read -r nums
-    [ -z "$nums" ] && return
-    local to_add=()
-    IFS=',' read -ra parts <<< "$nums"
-    for part in "${parts[@]}"; do
-        if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-            for ((n=${BASH_REMATCH[1]}; n<=${BASH_REMATCH[2]}; n++)); do
-                [ "$n" -ge 1 ] && [ "$n" -le "${#_CONFIG_PRESET[@]}" ] && to_add+=($n)
-            done
-        else
-            [ "$part" -ge 1 ] && [ "$part" -le "${#_CONFIG_PRESET[@]}" ] && to_add+=($part)
-        fi
-    done
-    for n in "${to_add[@]}"; do
-        local entry="${_CONFIG_PRESET[$((n-1))]}"
-        local label="${entry%%|*}"
-        # Check if already in active
-        local found=false
-        for a in "${_CONFIG_ACTIVE[@]}"; do
-            [ "$a" = "$entry" ] && found=true && break
-        done
-        if ! $found; then
-            _CONFIG_ACTIVE+=("$entry")
-            echo "  Added: $label"
-        fi
-    done
-}
-
-_config_custom() {
-    echo ""
-    printf "Width: "; read -r w
-    printf "Height: "; read -r h
-    printf "Refresh (Hz): "; read -r hz
-    [ -z "$w" ] || [ -z "$h" ] || [ -z "$hz" ] && return
-    local key="custom_${w}x${h}x${hz}"
-    local label="${w}x${h}@${hz}"
-    _CONFIG_ACTIVE+=("$label|$key")
-    # Also add to presets for reuse
-    _CONFIG_PRESET+=("$label|$key")
-    echo "  Added: $label"
-}
-
-_config_merge() {
-    echo ""
-    echo "Reading external EDID via I2C..."
-    DDC=""
-    for bus in 13 11 14; do
-        if i2cdetect -y $bus 0x50 0x50 2>/dev/null | grep -q 50; then
-            DDC=$bus; break
-        fi
-    done
-    if [ -z "$DDC" ]; then
-        echo "ERROR: No DDC bus found."
-        return
-    fi
-
-    cat > /tmp/hdmi-edid-merge.py << 'PYEOF'
-import subprocess, struct, sys
-bus = sys.argv[1] if len(sys.argv) > 1 else '13'
-data = bytearray(256)
-for a in range(256):
-    r = subprocess.run(['i2cget','-y',bus,'0x50',str(a)], capture_output=True, text=True)
-    if r.returncode == 0: data[a] = int(r.stdout.strip(),16)
-if data[:8] != bytes([0,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0]):
-    print("Invalid EDID header")
-    exit(1)
-name = "Display"
-for dtd_off in [54, 72, 90, 108]:
-    if dtd_off+18 > 128: break
-    dtd = data[dtd_off:dtd_off+18]
-    if dtd[0:2] == bytes([0,0]) and dtd[3] == 0xFC:
-        name = dtd[5:18].decode('ascii','ignore').strip('\x00\x0a\x20')
-        break
-vics = []
-if len(data) >= 256 and data[128] == 2:
-    off = data[130]; pos = 4
-    while pos < off:
-        tag = (data[128+pos]>>5)&7; length = data[128+pos]&31
-        if tag == 2:
-            n = data[128+pos+1]
-            for i in range(n): vics.append(data[128+pos+2+i])
-        pos += 1+length
-print(f"DISPLAY_NAME={name}")
-print(f"VICS={' '.join(str(v) for v in vics)}")
-print(f"EDID_BYTES={len(data)}")
-PYEOF
-    python3 /tmp/hdmi-edid-merge.py "$DDC"
-    rm -f /tmp/hdmi-edid-merge.py
-
-    echo "External EDID read complete."
-    echo "Use 'Add from preset' to add resolutions from the external display."
-    _config_done_msg
-}
-
-_config_preferred() {
-    local n="$1"
-    [ -z "$n" ] && { echo "Usage: P <number>"; return; }
-    [ "$n" -ge 1 ] && [ "$n" -le "${#_CONFIG_ACTIVE[@]}" ] || { echo "Invalid number."; return; }
-    _CONFIG_PREF_IDX=$((n-1))
-    local label="${_CONFIG_ACTIVE[$_CONFIG_PREF_IDX]%%|*}"
-    echo "Preferred: $label"
-}
-
-_config_reset() {
-    _CONFIG_ACTIVE=(
-        "3840x2160@60|4k60"
-        "3840x2160@30|4k30"
-        "1920x1080@60|1080p60"
-        "1920x1080@50|1080p50"
-        "1920x1080@30|1080p30"
-        "1920x1080@24|1080p24"
-        "1280x720@60|720p60"
-        "2560x1440@60|1440p60"
-        "1280x800@60|800p60"
-        "1360x768@60|768p60"
-        "1440x900@60|900p60"
-        "1680x1050@60|1050p60"
-        "1920x1200@60|1200p60"
-        "1024x768@60|x1024p60"
-        "640x480@60|480p60"
     )
     _CONFIG_PREF_IDX=2
     _CONFIG_PRESET=(
         "3840x2160@50|4k50"
         "3840x2160@25|4k25"
         "3840x2160@24|4k24"
+        "1920x1080@30|1080p30"
         "1920x1080@25|1080p25"
+        "1920x1080@24|1080p24"
         "1920x1080i@60|1080i60"
         "1920x1080i@50|1080i50"
         "1280x720@50|720p50"
@@ -366,23 +109,183 @@ _config_reset() {
         "3440x1440@60|uw1440p60"
         "1600x1200@60|uxga60"
         "1600x900@60|900p60_1600"
+        "1440x900@60|900p60"
+        "1680x1050@60|1050p60"
+        "1360x768@60|768p60"
         "1280x1024@60|sxga60"
         "1280x1024@75|sxga75"
+        "640x480@60|480p60"
         "720x480@60|480p60_720"
     )
-    echo "Restored to factory defaults."
 }
 
-_config_save() {
-    echo "Saving..."
-    local pref_key="${_CONFIG_ACTIVE[$_CONFIG_PREF_IDX]##*|}"
-    _config_gen_edid "$pref_key"
-    echo "EDID written."
-    _config_done_msg
+_cfg_loop() {
+    while true; do
+        _cfg_show
+        printf "Command [D/A/C/M/P/R/Q]: "
+        read -r cmd rest
+        case "${cmd^^}" in
+            D) _cfg_delete "$rest" ;;
+            A) _cfg_add ;;
+            C) _cfg_custom ;;
+            M) _cfg_merge ;;
+            P) _cfg_pref "$rest" ;;
+            R) _cfg_reset ;;
+            Q) _cfg_save; break ;;
+            *) echo "Unknown. D/A/C/M/P/R/Q" ;;
+        esac
+        echo ""
+    done
 }
 
-_config_done_msg() {
+_cfg_show() {
+    clear 2>/dev/null || true
+    echo "=== HDMI EDID Config ==="
+    if grep -q 'drm.edid_firmware' /proc/cmdline 2>/dev/null; then
+        local mode="Path B (drm.edid_firmware)"
+    else
+        local mode="Path A (runtime switch)"
+    fi
+    local pl="${_CONFIG_ACTIVE[$_CONFIG_PREF_IDX]%%|*}"
+    echo "Mode: $mode  |  ${#_CONFIG_ACTIVE[@]} modes  |  Preferred: $pl"
     echo ""
+    local i
+    for i in "${!_CONFIG_ACTIVE[@]}"; do
+        local label="${_CONFIG_ACTIVE[$i]%%|*}"
+        local mark=" "
+        [ "$i" -eq "$_CONFIG_PREF_IDX" ] && mark="*"
+        printf "  [%2d] %-24s %s\n" $((i+1)) "$label" "$mark"
+    done
+    echo ""
+    echo "D <nums>  Delete   A  Add preset   C  Custom   M  Merge I2C"
+    echo "P <num>   Set pref  R  Reset        Q  Save"
+}
+
+_cfg_delete() {
+    local nums="$1"
+    [ -z "$nums" ] && { echo "Usage: D 1,3,5-7"; return; }
+    [ ${#_CONFIG_ACTIVE[@]} -le 1 ] && { echo "Need at least 1 mode."; return; }
+    local td=()
+    local IFS=','; local parts=($nums); unset IFS
+    local part
+    for part in "${parts[@]}"; do
+        if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            local n
+            for ((n=${BASH_REMATCH[1]}; n<=${BASH_REMATCH[2]}; n++)); do
+                [ "$n" -ge 1 ] && [ "$n" -le "${#_CONFIG_ACTIVE[@]}" ] && td+=($n)
+            done
+        else
+            [ "$part" -ge 1 ] && [ "$part" -le "${#_CONFIG_ACTIVE[@]}" ] && td+=($part)
+        fi
+    done
+    [ ${#td[@]} -eq 0 ] && { echo "No valid entries."; return; }
+    local sorted=($(printf '%s\n' "${td[@]}" | sort -rn))
+    local n
+    for n in "${sorted[@]}"; do
+        local idx=$((n-1))
+        local label="${_CONFIG_ACTIVE[$idx]%%|*}"
+        unset '_CONFIG_ACTIVE[idx]'
+        [ "$idx" -lt "$_CONFIG_PREF_IDX" ] && _CONFIG_PREF_IDX=$((_CONFIG_PREF_IDX-1))
+        [ "$idx" -eq "$_CONFIG_PREF_IDX" ] && _CONFIG_PREF_IDX=0
+        echo "  Removed: $label"
+    done
+    _CONFIG_ACTIVE=("${_CONFIG_ACTIVE[@]}")
+}
+
+_cfg_add() {
+    echo ""
+    echo "Preset library:"
+    local i
+    for i in "${!_CONFIG_PRESET[@]}"; do
+        printf "  [%2d] %s\n" $((i+1)) "${_CONFIG_PRESET[$i]%%|*}"
+    done
+    echo ""
+    printf "Add which? (e.g. 1,3,5-7): "
+    read -r nums
+    [ -z "$nums" ] && return
+    local ta=()
+    local IFS=','; local parts=($nums); unset IFS
+    local part
+    for part in "${parts[@]}"; do
+        if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            local n
+            for ((n=${BASH_REMATCH[1]}; n<=${BASH_REMATCH[2]}; n++)); do
+                [ "$n" -ge 1 ] && [ "$n" -le "${#_CONFIG_PRESET[@]}" ] && ta+=($n)
+            done
+        else
+            [ "$part" -ge 1 ] && [ "$part" -le "${#_CONFIG_PRESET[@]}" ] && ta+=($part)
+        fi
+    done
+    local n
+    for n in "${ta[@]}"; do
+        local entry="${_CONFIG_PRESET[$((n-1))]}"
+        local found=false
+        local a
+        for a in "${_CONFIG_ACTIVE[@]}"; do
+            [ "$a" = "$entry" ] && found=true && break
+        done
+        if ! $found; then
+            _CONFIG_ACTIVE+=("$entry")
+            echo "  Added: ${entry%%|*}"
+        fi
+    done
+}
+
+_cfg_custom() {
+    echo ""
+    printf "Width: "; read -r w
+    printf "Height: "; read -r h
+    printf "Refresh (Hz): "; read -r hz
+    [ -z "$w" ] || [ -z "$h" ] || [ -z "$hz" ] && return
+    local key="custom_${w}x${h}x${hz}"
+    local label="${w}x${h}@${hz}"
+    _CONFIG_ACTIVE+=("$label|$key")
+    _CONFIG_PRESET+=("$label|$key")
+    echo "  Added: $label"
+}
+
+_cfg_merge() {
+    echo ""
+    echo "Reading external EDID via I2C..."
+    local ddc=""
+    local bus
+    for bus in 13 11 14; do
+        if i2cdetect -y $bus 0x50 0x50 2>/dev/null | grep -q 50; then
+            ddc=$bus; break
+        fi
+    done
+    if [ -z "$ddc" ]; then
+        echo "ERROR: No DDC bus found."
+        return
+    fi
+    echo "  DDC bus: $ddc"
+    python3 /usr/local/bin/hdmi-edid-merge "$ddc"
+    echo "Merge complete. Use A to add modes from external display."
+}
+
+_cfg_pref() {
+    local n="$1"
+    [ -z "$n" ] && { echo "Usage: P <number>"; return; }
+    [ "$n" -ge 1 ] && [ "$n" -le "${#_CONFIG_ACTIVE[@]}" ] || { echo "Invalid."; return; }
+    _CONFIG_PREF_IDX=$((n-1))
+    echo "Preferred: ${_CONFIG_ACTIVE[$_CONFIG_PREF_IDX]%%|*}"
+}
+
+_cfg_reset() {
+    _cfg_init
+    echo "Restored defaults."
+}
+
+_cfg_save() {
+    local pref_key="${_CONFIG_ACTIVE[$_CONFIG_PREF_IDX]##*|}"
+    local keys=""
+    local entry
+    for entry in "${_CONFIG_ACTIVE[@]}"; do
+        local k="${entry##*|}"
+        [ -z "$keys" ] && keys="$k" || keys="$keys,$k"
+    done
+    python3 /usr/local/bin/hdmi-edid-gen "$pref_key" "$keys"
+    echo "EDID saved."
     if grep -q 'drm.edid_firmware' /proc/cmdline 2>/dev/null; then
         echo "Path B: Reboot required."
     else
@@ -390,46 +293,32 @@ _config_done_msg() {
     fi
 }
 
-# ─── EDID generation with active list ───
-_config_gen_edid() {
-    local pref_key="${1:-1080p60}"
-    local keys=""
-    for entry in "${_CONFIG_ACTIVE[@]}"; do
-        local k="${entry##*|}"
-        [ -z "$keys" ] && keys="$k" || keys="$keys,$k"
-    done
-    python3 /usr/local/bin/hdmi-edid-gen "$pref_key" "$keys"
-}
+# ─── uninstall ─────────────────────────────────────────────────
 do_uninstall() {
     detect_paths
     echo "=== HDMI EDID Uninstall ==="
     echo ""
-
-    # Restore cmdline: remove both params
     if [ -f "${CMDLINE}.bak" ]; then
         cp "${CMDLINE}.bak" "$CMDLINE"
     else
         sed -i 's/ vc4.force_hotplug=1//' "$CMDLINE"
         sed -i 's/ drm.edid_firmware=HDMI-A-1:edid-hdmi-audio.bin//' "$CMDLINE"
     fi
-    echo "[1/3] cmdline restored"
-
+    echo "[1/4] cmdline restored"
     sed -i '/^hdmi_force_hotplug=1/d' "$CONFIG_TXT" 2>/dev/null || true
-    echo "[2/3] config.txt cleaned"
-
+    echo "[2/4] config.txt cleaned"
     systemctl disable hdmi-edid-boot.service 2>/dev/null || true
     systemctl stop hdmi-edid-boot.service 2>/dev/null || true
     rm -f /etc/systemd/system/hdmi-edid-boot.service
     systemctl daemon-reload
+    echo "[3/4] service removed"
     echo -n reset > "$O" 2>/dev/null || true
     echo detect > "$S" 2>/dev/null || true
-    echo "[3/3] service removed, EDID override cleared"
-
+    echo "[4/4] EDID override cleared"
     echo ""
     echo "Uninstall complete. Reboot to fully apply."
 }
 
-# ─── main ──────────────────────────────────────────────────────────
 case "${1:-}" in
     switch)   need_root; do_switch ;;
     config)   do_config ;;
