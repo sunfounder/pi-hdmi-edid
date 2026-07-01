@@ -1,0 +1,14 @@
+#!/bin/sh
+# pi-hdmi-edid initramfs hook — include EDID firmware in initramfs
+# so kernel can load it before root filesystem is mounted
+
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case $1 in prereqs) prereqs; exit 0;; esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+if [ -f /lib/firmware/edid-hdmi-audio.bin ]; then
+    mkdir -p ${DESTDIR}/lib/firmware
+    cp -p /lib/firmware/edid-hdmi-audio.bin ${DESTDIR}/lib/firmware/
+fi

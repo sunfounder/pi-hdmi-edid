@@ -13,7 +13,7 @@ echo "=== pi-hdmi-edid installer ==="
 echo ""
 
 # Step 1: Download EDID generator & create default EDID
-echo "[1/4] Generating default EDID..."
+echo "[1/6] Generating default EDID..."
 GEN="/tmp/hdmi-edid-gen"
 curl -sL -o "$GEN" https://raw.githubusercontent.com/sunfounder/pi-hdmi-edid/main/hdmi-edid-gen
 chmod +x "$GEN"
@@ -22,7 +22,7 @@ rm -f "$GEN"
 echo ""
 
 # Step 2: Configure kernel (force mode = drm.edid_firmware + force_hotplug)
-echo "[2/4] Configuring kernel (force mode)..."
+echo "[2/6] Configuring kernel (force mode)..."
 if ! grep -q 'vc4.force_hotplug=1' "$CMDLINE"; then
     [ ! -f "${CMDLINE}.bak" ] && cp "$CMDLINE" "${CMDLINE}.bak"
     sed -i '$s/$/ vc4.force_hotplug=1/' "$CMDLINE"
@@ -37,7 +37,7 @@ else
     echo "  drm.edid_firmware already present"
 fi
 
-echo "[3/4] Configuring config.txt..."
+echo "[3/6] Configuring config.txt..."
 if ! grep -q '^hdmi_force_hotplug=1' "$CONFIG_TXT"; then
     sed -i '/^dtoverlay=vc4-kms-v3d$/a hdmi_force_hotplug=1' "$CONFIG_TXT"
     echo "  Added hdmi_force_hotplug=1"
@@ -46,7 +46,7 @@ else
 fi
 
 # Step 3: Install scripts
-echo "[4/4] Installing scripts..."
+echo "[4/6] Installing scripts..."
 curl -sL -o "$SCRIPT" https://raw.githubusercontent.com/sunfounder/pi-hdmi-edid/main/hdmi-edid
 chmod +x "$SCRIPT"
 echo "  hdmi-edid installed"
@@ -57,14 +57,38 @@ curl -sL -o /usr/local/bin/hdmi-edid-merge https://raw.githubusercontent.com/sun
 chmod +x /usr/local/bin/hdmi-edid-merge
 echo "  hdmi-edid-merge installed"
 
-# No boot service for force mode
-systemctl disable hdmi-edid-boot.service 2>/dev/null || true
-rm -f /etc/systemd/system/hdmi-edid-boot.service
-systemctl daemon-reload 2>/dev/null || true
+# Step 3.5: Install initramfs hook (so EDID loads before rootfs mount)
+echo "[5/6] Installing initramfs hook..."
+curl -sL -o /etc/initramfs-tools/hooks/edid https://raw.githubusercontent.com/sunfounder/pi-hdmi-edid/main/initramfs-edid-hook
+chmod +x /etc/initramfs-tools/hooks/edid
+[ ! -f /boot/firmware/cmdline.txt.bak ] && cp /boot/firmware/cmdline.txt /boot/firmware/cmdline.txt.bak 2>/dev/null || true
+update-initramfs -u 2>&1 || echo "  WARNING: update-initramfs failed — EDID may not load at early boot"
+echo ""
+
+# Step 4: Install systemd services (both boot + user)
+echo "[6/6] Installing services..."
+# Boot service — refreshes PipeWire at boot
+curl -sL -o /etc/systemd/system/hdmi-edid-boot.service https://raw.githubusercontent.com/sunfounder/pi-hdmi-edid/main/systemd/hdmi-edid-boot.service
+systemctl daemon-reload
+systemctl enable hdmi-edid-boot.service 2>/dev/null || true
+echo "  hdmi-edid-boot.service installed"
+
+# User service — refreshes PipeWire + panel after desktop starts
+DESKTOP_USER=$(loginctl list-users --no-legend 2>/dev/null | awk '$1 != "0" {print $2; exit}')
+if [ -n "$DESKTOP_USER" ]; then
+    USER_HOME=$(eval echo ~"$DESKTOP_USER")
+    mkdir -p "$USER_HOME/.config/systemd/user"
+    curl -sL -o "$USER_HOME/.config/systemd/user/hdmi-edid-user.service" https://raw.githubusercontent.com/sunfounder/pi-hdmi-edid/main/systemd/hdmi-edid-user.service
+    chown -R "$DESKTOP_USER":"$DESKTOP_USER" "$USER_HOME/.config/systemd"
+    su -l "$DESKTOP_USER" -c "XDG_RUNTIME_DIR=/run/user/\$(id -u) systemctl --user daemon-reload && XDG_RUNTIME_DIR=/run/user/\$(id -u) systemctl --user enable hdmi-edid-user.service" 2>/dev/null || true
+    echo "  hdmi-edid-user.service installed"
+else
+    echo "  WARNING: no desktop user found, skipping user service"
+fi
 
 echo ""
 echo "========================================"
-echo "  Force mode installed"
-echo "  Reboot to apply."
+echo "  pi-hdmi-edid installed (force mode)"
+echo "  Reboot required."
 echo "  Use hdmi-edid config to manage EDID."
 echo "========================================"
