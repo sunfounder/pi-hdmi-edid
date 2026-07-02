@@ -5,11 +5,18 @@ set -euo pipefail
 
 [ "$(id -u)" -eq 0 ] || { echo "ERROR: must run as root"; exit 1; }
 
-# Auto-detect boot directory (Ubuntu vs Raspbian)
-if [ -f "/boot/firmware/cmdline.txt" ]; then
-    BOOT_DIR="/boot/firmware"
-else
-    BOOT_DIR="/boot"
+# Auto-detect boot directory (works across Ubuntu / Raspbian / Armbian)
+BOOT_DIR=""
+for d in /boot/firmware /boot; do
+    if [ -f "$d/cmdline.txt" ]; then
+        BOOT_DIR="$d"
+        break
+    fi
+done
+if [ -z "$BOOT_DIR" ]; then
+    echo "ERROR: cannot find cmdline.txt in /boot/firmware or /boot"
+    echo "Please check your boot partition is mounted."
+    exit 1
 fi
 CMDLINE="$BOOT_DIR/cmdline.txt"
 CONFIG_TXT="$BOOT_DIR/config.txt"
